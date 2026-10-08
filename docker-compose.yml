@@ -1,0 +1,98 @@
+services:
+  postgres:
+    image: postgres:18-alpine
+    container_name: ${COMPOSE_NAME}-db
+    environment:
+      POSTGRES_DB: ${DB__PG_DB}
+      POSTGRES_USER: ${DB__PG_USER}
+      POSTGRES_PASSWORD: ${DB__PG_PASSWORD}
+    volumes:
+      - postgres_db:/var/lib/postgresql
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${DB__PG_USER} -d ${DB__PG_DB}"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  rabbitmq:
+    image: rabbitmq:4.3.0-management-alpine
+    container_name: ${COMPOSE_NAME}-rabbitmq
+    ports:
+      - "5672:5672"
+      - "15672:15672"
+    environment:
+      RABBITMQ_DEFAULT_USER: guest
+      RABBITMQ_DEFAULT_PASS: guest
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "check_running"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  api:
+    container_name: ${COMPOSE_NAME}-api
+    build:
+      context: .
+      dockerfile: Dockerfile
+    command: python -m app
+    env_file:
+      - .env
+    ports:
+      - "8000:8000"
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      postgres:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+
+  outbox:
+    container_name: ${COMPOSE_NAME}-outbox
+    build:
+      context: .
+      dockerfile: Dockerfile
+    command: python -m app.workers.outbox
+    env_file:
+      - .env
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      postgres:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+
+  consumer:
+    container_name: ${COMPOSE_NAME}-consumer
+    build:
+      context: .
+      dockerfile: Dockerfile
+    command: python -m app.workers.consumer
+    env_file:
+      - .env
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      postgres:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+
+  migrate:
+    container_name: ${COMPOSE_NAME}-migrate
+    build:
+      context: .
+      dockerfile: Dockerfile
+    command: alembic upgrade head
+    env_file:
+      - .env
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+volumes:
+  postgres_db:
+
